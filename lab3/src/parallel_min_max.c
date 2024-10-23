@@ -15,6 +15,17 @@
 #include "find_min_max.h"
 #include "utils.h"
 
+#define SET_POSITIVE_INT_OPTARG(var) \
+  var = atoi(optarg);\
+  if (var <= 0) {\
+    printf("%s is a positive number\n", #var);\
+    return 1;\
+  }
+
+int get_file_name(char *fname, size_t fname_size, int i, struct timeval start_time) {
+  return snprintf(fname, fname_size, ".parallel_min_max_%d_%jd", i, start_time.tv_sec);
+}
+
 int main(int argc, char **argv) {
   int seed = -1;
   int array_size = -1;
@@ -39,19 +50,13 @@ int main(int argc, char **argv) {
       case 0:
         switch (option_index) {
           case 0:
-            seed = atoi(optarg);
-            // your code here
-            // error handling
+            SET_POSITIVE_INT_OPTARG(seed);
             break;
           case 1:
-            array_size = atoi(optarg);
-            // your code here
-            // error handling
+            SET_POSITIVE_INT_OPTARG(array_size);
             break;
           case 2:
-            pnum = atoi(optarg);
-            // your code here
-            // error handling
+            SET_POSITIVE_INT_OPTARG(pnum);
             break;
           case 3:
             with_files = true;
@@ -90,24 +95,51 @@ int main(int argc, char **argv) {
 
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
+  int* pipes = calloc(pnum, sizeof (int));
 
   for (int i = 0; i < pnum; i++) {
+    int pipefd[2];
+
+    if (pipe(pipefd) == -1) {
+      perror("pipe");
+      return EXIT_FAILURE;
+    }
+
     pid_t child_pid = fork();
     if (child_pid >= 0) {
       // successful fork
       active_child_processes += 1;
       if (child_pid == 0) {
         // child process
+        close(pipefd[0]);
 
         // parallel somehow
+        unsigned int begin = (size_t)array_size * i / pnum;
+        unsigned int end = (size_t)array_size * (i+1) / pnum;
+        struct MinMax min_max = GetMinMax(array, begin, end);
 
         if (with_files) {
-          // use files here
+          //TODO: error handling
+          
+          char fname[64];
+          get_file_name(fname, sizeof fname, i, start_time);
+          
+          FILE* f = fopen(fname, "wb");
+          if (f == NULL) {
+            perror("Error opening temp file");
+            return 1;
+          }
+          fwrite(&min_max, sizeof min_max, 1, f);
+          fclose(f);
         } else {
           // use pipe here
+          write(pipefd[1], &min_max, sizeof min_max);
+          close(pipefd[1]);
         }
         return 0;
       }
+      close(pipefd[1]);
+      pipes[i] = pipefd[0];
 
     } else {
       printf("Fork failed!\n");
@@ -117,6 +149,12 @@ int main(int argc, char **argv) {
 
   while (active_child_processes > 0) {
     // your code here
+    int wstatus = 0;
+    pid_t pid = wait(&wstatus);
+
+    if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus)) {
+      printf("child didn't exit normally, wstatus = 0x%08x\n", wstatus);
+    }
 
     active_child_processes -= 1;
   }
@@ -126,17 +164,31 @@ int main(int argc, char **argv) {
   min_max.max = INT_MIN;
 
   for (int i = 0; i < pnum; i++) {
-    int min = INT_MAX;
-    int max = INT_MIN;
+    struct MinMax cmm;
 
     if (with_files) {
       // read from files
+
+      //TODO: error handling
+      char fname[64];
+      get_file_name(fname, sizeof fname, i, start_time);
+      
+      FILE* f = fopen(fname, "rb");
+      if (f == NULL) {
+        perror("Error opening temp file");
+        return 1;
+      }
+      fread(&cmm, sizeof cmm, 1, f);
+      fclose(f);
+      remove(fname);
     } else {
       // read from pipes
+      read(pipes[i], &cmm, sizeof cmm);
+      close(pipes[i]);
     }
 
-    if (min < min_max.min) min_max.min = min;
-    if (max > min_max.max) min_max.max = max;
+    if (cmm.min < min_max.min) min_max.min = cmm.min;
+    if (cmm.max > min_max.max) min_max.max = cmm.max;
   }
 
   struct timeval finish_time;

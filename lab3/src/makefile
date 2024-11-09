@@ -6,7 +6,7 @@ ALL=sequential_min_max parallel_min_max exec_wrapper
 all : $(ALL)
 
 sequential_min_max : $(OBJECTS) utils.h find_min_max.h
-	$(CC) -o sequential_min_max find_min_max.o utils.o sequential_min_max.c $(CFLAGS)
+	$(CC) -o sequential_min_max $(OBJECTS) sequential_min_max.c $(CFLAGS)
 
 parallel_min_max : $(OBJECTS) utils.h find_min_max.h
 	$(CC) -o parallel_min_max $(OBJECTS) parallel_min_max.c $(CFLAGS)
@@ -20,5 +20,6 @@ utils.o : utils.h
 find_min_max.o : utils.h find_min_max.h
 	$(CC) -o find_min_max.o -c find_min_max.c $(CFLAGS)
 
+.PHONY : clean
 clean :
-	rm $(OBJECTS) $(ALL)
+	rm -f $(OBJECTS) $(ALL)

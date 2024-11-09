@@ -11,34 +11,44 @@
 #include <sys/wait.h>
 
 #include <getopt.h>
+#include <signal.h>
 
 #include "find_min_max.h"
 #include "utils.h"
 
-#define SET_POSITIVE_INT_OPTARG(var) \
+#define SET_POSITIVE_INT_OPTARG(var) {\
   var = atoi(optarg);\
   if (var <= 0) {\
     printf("%s is a positive number\n", #var);\
     return 1;\
-  }
+  }\
+}
 
 int get_file_name(char *fname, size_t fname_size, int i, struct timeval start_time) {
   return snprintf(fname, fname_size, ".parallel_min_max_%d_%jd", i, start_time.tv_sec);
 }
 
+int pnum = -1;
+int *child_pids;
+
+void alarm_handler(int signum) {
+  if (signum == SIGALRM)
+    for (int i = 0; i < pnum; i++)
+      kill(child_pids[i], SIGINT);
+}
+
 int main(int argc, char **argv) {
   int seed = -1;
   int array_size = -1;
-  int pnum = -1;
+  int timeout = 0;
   bool with_files = false;
 
   while (true) {
-    int current_optind = optind ? optind : 1;
-
     static struct option options[] = {{"seed", required_argument, 0, 0},
                                       {"array_size", required_argument, 0, 0},
                                       {"pnum", required_argument, 0, 0},
                                       {"by_files", no_argument, 0, 'f'},
+                                      {"timeout", required_argument, 0, 0},
                                       {0, 0, 0, 0}};
 
     int option_index = 0;
@@ -61,8 +71,12 @@ int main(int argc, char **argv) {
           case 3:
             with_files = true;
             break;
+          case 4:
+            timeout = -1;
+            SET_POSITIVE_INT_OPTARG(timeout);
+            break;
 
-          defalut:
+          default:
             printf("Index %d is out of options\n", option_index);
         }
         break;
@@ -96,6 +110,7 @@ int main(int argc, char **argv) {
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
   int* pipes = calloc(pnum, sizeof (int));
+  child_pids = calloc(pnum, sizeof (int));
 
   for (int i = 0; i < pnum; i++) {
     int pipefd[2];
@@ -137,7 +152,10 @@ int main(int argc, char **argv) {
           close(pipefd[1]);
         }
         return 0;
+      } else {
+        child_pids[i] = child_pid;
       }
+
       close(pipefd[1]);
       pipes[i] = pipefd[0];
 
@@ -146,6 +164,9 @@ int main(int argc, char **argv) {
       return 1;
     }
   }
+
+  alarm(timeout);
+  signal(SIGALRM, alarm_handler);
 
   while (active_child_processes > 0) {
     // your code here

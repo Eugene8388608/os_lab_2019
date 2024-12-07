@@ -12,47 +12,40 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-struct Server {
-  char ip[255];
-  int port;
-};
+#include "utils.h"
 
-uint64_t MultModulo(uint64_t a, uint64_t b, uint64_t mod) {
-  uint64_t result = 0;
-  a = a % mod;
-  while (b > 0) {
-    if (b % 2 == 1)
-      result = (result + a) % mod;
-    a = (a * 2) % mod;
-    b /= 2;
-  }
-
-  return result % mod;
+#define SET_UINT64_OPTARG(var, min) {\
+  char *end;\
+  var = strtoull(optarg, &end, 10);\
+  if (errno || optarg + strlen(optarg) != end || var < (min)) {\
+    printf("%s is a 64-bit number not less than %d\n", #var, (min));\
+    return 1;\
+  }\
 }
 
-bool ConvertStringToUI64(const char *str, uint64_t *val) {
-  char *end = NULL;
-  unsigned long long i = strtoull(str, &end, 10);
-  if (errno == ERANGE) {
-    fprintf(stderr, "Out of uint64_t range: %s\n", str);
-    return false;
-  }
+char fscan_address_ip[256];
+uint16_t fscan_address_port;
+FILE* fscan_address_file;
 
-  if (errno != 0)
-    return false;
-
-  *val = i;
-  return true;
+int fscan_address() {
+  return fscanf(
+    fscan_address_file,
+    "%255[0123456789.]:%hu\n",
+    fscan_address_ip,
+    &fscan_address_port
+  );
 }
+
+uint64_t k = -1;
+uint64_t mod = -1;
+unsigned int servers_num = 0;
+
+uint64_t recursive_request(int i);
 
 int main(int argc, char **argv) {
-  uint64_t k = -1;
-  uint64_t mod = -1;
-  char servers[255] = {'\0'}; // TODO: explain why 255
+  char* servers = NULL;
 
   while (true) {
-    int current_optind = optind ? optind : 1;
-
     static struct option options[] = {{"k", required_argument, 0, 0},
                                       {"mod", required_argument, 0, 0},
                                       {"servers", required_argument, 0, 0},
@@ -68,16 +61,13 @@ int main(int argc, char **argv) {
     case 0: {
       switch (option_index) {
       case 0:
-        ConvertStringToUI64(optarg, &k);
-        // TODO: your code here
+        SET_UINT64_OPTARG(k, 1);
         break;
       case 1:
-        ConvertStringToUI64(optarg, &mod);
-        // TODO: your code here
+        SET_UINT64_OPTARG(mod, 2);
         break;
       case 2:
-        // TODO: your code here
-        memcpy(servers, optarg, strlen(optarg));
+        servers = optarg;
         break;
       default:
         printf("Index %d is out of options\n", option_index);
@@ -92,73 +82,89 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (k == -1 || mod == -1 || !strlen(servers)) {
+  if (k == -1 || mod == -1 || servers == NULL) {
     fprintf(stderr, "Using: %s --k 1000 --mod 5 --servers /path/to/file\n",
             argv[0]);
     return 1;
   }
 
-  // TODO: for one server here, rewrite with servers from file
-  unsigned int servers_num = 1;
-  struct Server *to = malloc(sizeof(struct Server) * servers_num);
-  // TODO: delete this and parallel work between servers
-  to[0].port = 20001;
-  memcpy(to[0].ip, "127.0.0.1", sizeof("127.0.0.1"));
-
-  // TODO: work continiously, rewrite to make parallel
-  for (int i = 0; i < servers_num; i++) {
-    struct hostent *hostname = gethostbyname(to[i].ip);
-    if (hostname == NULL) {
-      fprintf(stderr, "gethostbyname failed with %s\n", to[i].ip);
-      exit(1);
-    }
-
-    struct sockaddr_in server;
-    server.sin_family = AF_INET;
-    server.sin_port = htons(to[i].port);
-    server.sin_addr.s_addr = *((unsigned long *)hostname->h_addr);
-
-    int sck = socket(AF_INET, SOCK_STREAM, 0);
-    if (sck < 0) {
-      fprintf(stderr, "Socket creation failed!\n");
-      exit(1);
-    }
-
-    if (connect(sck, (struct sockaddr *)&server, sizeof(server)) < 0) {
-      fprintf(stderr, "Connection failed\n");
-      exit(1);
-    }
-
-    // TODO: for one server
-    // parallel between servers
-    uint64_t begin = 1;
-    uint64_t end = k;
-
-    char task[sizeof(uint64_t) * 3];
-    memcpy(task, &begin, sizeof(uint64_t));
-    memcpy(task + sizeof(uint64_t), &end, sizeof(uint64_t));
-    memcpy(task + 2 * sizeof(uint64_t), &mod, sizeof(uint64_t));
-
-    if (send(sck, task, sizeof(task), 0) < 0) {
-      fprintf(stderr, "Send failed\n");
-      exit(1);
-    }
-
-    char response[sizeof(uint64_t)];
-    if (recv(sck, response, sizeof(response), 0) < 0) {
-      fprintf(stderr, "Recieve failed\n");
-      exit(1);
-    }
-
-    // TODO: from one server
-    // unite results
-    uint64_t answer = 0;
-    memcpy(&answer, response, sizeof(uint64_t));
-    printf("answer: %llu\n", answer);
-
-    close(sck);
+  fscan_address_file = fopen(servers, "r");
+  if (fscan_address_file == NULL) {
+    perror("Error opening file");
+    return 1;
   }
-  free(to);
+
+  for (int r = fscan_address(); r != EOF; r = fscan_address()) {
+    if (r != 2) {
+      fprintf(stderr, "Wrong file format\n");
+      return 1;
+    }
+
+    servers_num++;
+  }
+
+  if (servers_num == 0) {
+    fprintf(stderr, "Empty file\n");
+    return 1;
+  }
+
+  rewind(fscan_address_file);
+
+  uint64_t answer = recursive_request(0);
+
+  printf("answer: %lu\n", answer);
 
   return 0;
+}
+
+uint64_t recursive_request(int i) {
+  if (i == servers_num) return 1;
+
+  fscan_address();
+  struct hostent *hostname = gethostbyname(fscan_address_ip);
+  if (hostname == NULL) {
+    fprintf(stderr, "gethostbyname failed with %s\n", fscan_address_ip);
+    exit(1);
+  }
+
+  struct sockaddr_in server;
+  server.sin_family = AF_INET;
+  server.sin_port = htons(fscan_address_port);
+  server.sin_addr.s_addr = *((unsigned long *)hostname->h_addr);
+
+  int sck = socket(AF_INET, SOCK_STREAM, 0);
+  if (sck < 0) {
+    perror("Socket creation failed");
+    exit(1);
+  }
+
+  if (connect(sck, (struct sockaddr *)&server, sizeof(server)) < 0) {
+    perror("Connection failed");
+    exit(1);
+  }
+
+  struct FactorialArgs task = {
+    begin: k * (__uint128_t)i / servers_num + 1,
+    end: k * (__uint128_t)(i + 1) / servers_num,
+    mod: mod
+  };
+
+  if (send(sck, &task, sizeof task, 0) < 0) {
+    perror("Send failed");
+    exit(1);
+  }
+
+  //ни один recv ещё не вызван
+  uint64_t answer = recursive_request(i + 1);
+  //теперь, может быть, вызван
+
+  uint64_t response;
+  if (recv(sck, &response, sizeof(response), 0) < 0) {
+    perror("Receive failed");
+    exit(1);
+  }
+
+  close(sck);
+
+  return MultModulo(answer, response, mod);
 }

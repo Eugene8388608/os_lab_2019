@@ -9,7 +9,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define SERV_PORT 20001
 #define BUFSIZE 1024
 #define SADDR struct sockaddr
 #define SLEN sizeof(struct sockaddr_in)
@@ -20,14 +19,14 @@ int main(int argc, char **argv) {
   struct sockaddr_in servaddr;
   struct sockaddr_in cliaddr;
 
-  if (argc != 2) {
-    printf("usage: client <IPaddress of server>\n");
+  if (argc != 3) {
+    printf("usage: %s <IP> <port>\n", argv[0]);
     exit(1);
   }
 
   memset(&servaddr, 0, sizeof(servaddr));
   servaddr.sin_family = AF_INET;
-  servaddr.sin_port = htons(SERV_PORT);
+  servaddr.sin_port = htons(atoi(argv[2]));
 
   if (inet_pton(AF_INET, argv[1], &servaddr.sin_addr) < 0) {
     perror("inet_pton problem");
@@ -46,10 +45,13 @@ int main(int argc, char **argv) {
       exit(1);
     }
 
-    if (recvfrom(sockfd, recvline, BUFSIZE, 0, NULL, NULL) == -1) {
+    int n2 = recvfrom(sockfd, recvline, BUFSIZE, 0, NULL, NULL);
+    if (n2 == -1) {
       perror("recvfrom problem");
       exit(1);
     }
+
+    recvline[n2] = 0;
 
     printf("REPLY FROM SERVER= %s\n", recvline);
   }
